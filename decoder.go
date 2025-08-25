@@ -44,7 +44,7 @@ func (br *byteReader) read(amount uintptr) ([]byte, error) {
 //   - int32, uint32: 4 bytes
 //   - int64, uint64: 8 bytes
 //   - int, uint: 4 bytes on 32-bit systems, 8 bytes on 64-bit systems
-//   - array with length N: N bytes
+//   - array with length N: N items are parsed recursively
 //   - string: LEN bytes for N, then N bytes
 //   - slice: LEN bytes for N, then N items are parsed recursively
 //   - struct: same as slice, but the amount of items is determined by the amount of fields
@@ -96,12 +96,14 @@ func (d *Decoder) decode(v reflect.Value) (err error) {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32,
 		reflect.Int64, reflect.Float32, reflect.Float64, reflect.Complex64,
 		reflect.Complex128, reflect.Uint, reflect.Uint8, reflect.Uint16,
-		reflect.Uint32, reflect.Uint64, reflect.Array:
-		err = d.decodeStaticBytes(v)
+		reflect.Uint32, reflect.Uint64:
+		err = d.decodeBytes(v, ty.Size())
 	case reflect.String:
-		err = d.decodeItemWithLength(v)
+		err = d.decodeBytesWithLength(v)
+	case reflect.Array:
+		err = d.decodeSeq(v, ty.Size())
 	case reflect.Slice:
-		err = d.decodeSlice(v)
+		err = d.decodeSeqWithLength(v)
 	// case reflect.Map:
 	//	err = d.decodeMap(v)
 	case reflect.Struct:
@@ -137,17 +139,14 @@ func (d *Decoder) decodeBytes(v reflect.Value, length uintptr) error {
 
 		bp := (*byte)(p)
 		sl := unsafe.Slice(bp, length)
+
 		copy(sl, b)
 	}
 
 	return nil
 }
 
-func (d *Decoder) decodeStaticBytes(v reflect.Value) error {
-	return d.decodeBytes(v, v.Type().Size())
-}
-
-func (d *Decoder) decodeItemWithLength(v reflect.Value) error {
+func (d *Decoder) decodeBytesWithLength(v reflect.Value) error {
 	length := uintptr(0)
 
 	err := d.decodeBytes(reflect.ValueOf(&length), d.c.LenBytes)
@@ -158,7 +157,7 @@ func (d *Decoder) decodeItemWithLength(v reflect.Value) error {
 	return d.decodeBytes(v, length)
 }
 
-func (d *Decoder) decodeSliceWithLength(v reflect.Value, length uintptr) error {
+func (d *Decoder) decodeSeq(v reflect.Value, length uintptr) error {
 	v.Grow(int(length))
 	v.SetLen(int(length))
 
@@ -172,7 +171,7 @@ func (d *Decoder) decodeSliceWithLength(v reflect.Value, length uintptr) error {
 	return nil
 }
 
-func (d *Decoder) decodeSlice(v reflect.Value) error {
+func (d *Decoder) decodeSeqWithLength(v reflect.Value) error {
 	length := uintptr(0)
 
 	err := d.decodeBytes(reflect.ValueOf(&length), d.c.LenBytes)
@@ -180,7 +179,7 @@ func (d *Decoder) decodeSlice(v reflect.Value) error {
 		return err
 	}
 
-	return d.decodeSliceWithLength(v, length)
+	return d.decodeSeq(v, length)
 }
 
 /*
