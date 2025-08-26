@@ -121,11 +121,7 @@ func (d *Decoder) decodeBytes(v reflect.Value, length uintptr) error {
 		return err
 	}
 
-	if v.Kind() == reflect.Array {
-		copy(v.Bytes(), b)
-	} else if v.Kind() == reflect.Pointer && v.Elem().Kind() == reflect.Array {
-		copy(v.Elem().Bytes(), b)
-	} else if v.Kind() == reflect.String {
+	if v.Kind() == reflect.String {
 		v.SetString(string(b))
 	} else if v.Kind() == reflect.Pointer && v.Elem().Kind() == reflect.String {
 		v.Elem().SetString(string(b))
@@ -158,8 +154,10 @@ func (d *Decoder) decodeBytesWithLength(v reflect.Value) error {
 }
 
 func (d *Decoder) decodeSeq(v reflect.Value, length uintptr) error {
-	v.Grow(int(length))
-	v.SetLen(int(length))
+	if v.Kind() == reflect.Slice {
+		v.Grow(int(length))
+		v.SetLen(int(length))
+	}
 
 	for i := range length {
 		err := d.decode(v.Index(int(i)))
