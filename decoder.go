@@ -40,7 +40,7 @@ func (br *byteReader) read(amount uintptr, t reflect.Type) ([]byte, error) {
 //
 // The binary formats of each Go value are as follows:
 //
-//   - bool, int8, uint8: byte.
+//   - bool, int8, uint8: 1 byte.
 //   - int16, uint16: 2 bytes.
 //   - int32, uint32: 4 bytes.
 //   - int64, uint64: 8 bytes.
@@ -109,7 +109,7 @@ func (d *Decoder) decode(lc localConfig, v reflect.Value) (err error) {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32,
 		reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16,
 		reflect.Uint32, reflect.Uint64, reflect.Uintptr, reflect.Float32,
-		reflect.Float64, reflect.Complex64, reflect.Complex128:
+		reflect.Float64, reflect.Complex64, reflect.Complex128, reflect.Bool:
 		err = d.decodeBytes(lc, v, ty.Size())
 	case reflect.String:
 		err = d.decodeBytesWithLength(lc, v)
