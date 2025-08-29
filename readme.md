@@ -4,7 +4,7 @@ A library for parsing binary formats into Go values, based on encoding/json and 
 
 ## Installation
 
-`go get github.com/voidwyrm-2/parbyte`
+`go get -u github.com/voidwyrm-2/parbyte/v2`
 
 ## Example
 
