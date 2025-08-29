@@ -32,9 +32,7 @@ func main() {
 
 	defer fr.Close()
 
-	decoder := parbyte.NewDecoder(fr, &parbyte.Config{
-		LenBytes: 1,
-	})
+	decoder := parbyte.NewDecoder(fr, nil)
 
 	md := metadata{}
 

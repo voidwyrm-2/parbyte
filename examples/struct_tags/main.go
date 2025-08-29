@@ -10,7 +10,7 @@ import (
 type metadata struct {
 	NameLength uint8
 	Name       string `length:"NameLength"`
-	Data       string //`endian:"little"`
+	Data       string `lengthSize:"2" endian:"big"`
 	Meta       struct {
 		A string `length:"8"`
 		B string `length:"8"`
@@ -26,9 +26,7 @@ func main() {
 
 	defer fr.Close()
 
-	dc := parbyte.DefaultConfig
-	dc.LenBytes = 2
-	decoder := parbyte.NewDecoder(fr, dc)
+	decoder := parbyte.NewDecoder(fr, nil)
 
 	md := metadata{}
 

@@ -10,10 +10,6 @@ import (
 	"unsafe"
 )
 
-func isInteger(k reflect.Kind) bool {
-	return (k >= reflect.Int && k <= reflect.Int64) || (k >= reflect.Uint && k <= reflect.Uint64) || k == reflect.Uintptr
-}
-
 type byteReader struct {
 	inner      io.Reader
 	amountRead uintptr
@@ -51,9 +47,9 @@ func (br *byteReader) greedy() ([]byte, error) {
 // Unmarshal parses bytes of data and stores the result in the value pointed to by v.
 // Unmarshal panics if v is nil or not a pointer.
 //
-// The binary formats of each Go value are as follows:
+// The binary formats of each Go type are as follows:
 //
-//   - bool, int8, uint8: 1 byte.
+//   - bool, int8, uint8, byte: 1 byte.
 //   - int16, uint16: 2 bytes.
 //   - int32, uint32: 4 bytes.
 //   - int64, uint64: 8 bytes.
@@ -63,12 +59,13 @@ func (br *byteReader) greedy() ([]byte, error) {
 //   - slice: LEN bytes for N, then N items are parsed recursively.
 //   - struct: same as slice, but the amount of items is determined by the amount of fields.
 //
-// LEN is the amount of bytes specified by [Config.LenBytes].
+// LEN is the amount of bytes specified by the `lengthSize` tag.
 //
 // The struct tags and their uses:
 //
 //   - `length`: see below
-//   - `endian`: the endianness of the field value; panics if the value is not 'big' or 'little', defaults to 'little'.
+//   - `endian`: the endianness of the field value, which panics if the value is not 'big' or 'little'. Defaults to 'little'.
+//   - `lengthSize`: the size of the length of the field value, as specified in the above binary formats section; panics if the value is zero. Defaults to 4.
 //
 // The length tag:
 //
@@ -79,7 +76,6 @@ func (br *byteReader) greedy() ([]byte, error) {
 //
 // If the value is 'greedy:', then that field will be filled with the rest of the bytes in the buffer.
 // Bytes may be wasted if the amount of bytes can't be evenly divided into the value.
-
 func Unmarshal(data []byte, v any, config *Config) error {
 	buf := bytes.NewBuffer(data)
 	decoder := NewDecoder(buf, config)
@@ -203,7 +199,7 @@ func (d *Decoder) decodeBytesWithLength(lc localConfig, v reflect.Value) error {
 	length := lc.value.length
 
 	if length == 0 && !lc.value.greedy {
-		err := d.decodeBytes(lc, reflect.ValueOf(&length), d.c.LenBytes)
+		err := d.decodeBytes(lc, reflect.ValueOf(&length), lc.lengthSize)
 		if err != nil {
 			return err
 		}
@@ -272,7 +268,7 @@ func (d *Decoder) decodeSeqWithLength(lc localConfig, v reflect.Value) error {
 	length := lc.value.length
 
 	if !lc.value.hasValue && !lc.value.greedy {
-		err := d.decodeBytes(lc, reflect.ValueOf(&length), d.c.LenBytes)
+		err := d.decodeBytes(lc, reflect.ValueOf(&length), lc.lengthSize)
 		if err != nil {
 			return err
 		}
@@ -285,8 +281,8 @@ func (d *Decoder) decodeSeqWithLength(lc localConfig, v reflect.Value) error {
 func (d *Decoder) decodeMap(lc localConfig, v reflect.Value) error {
 	length := lc.value.length
 
-	if length <= 0 {
-		err := d.decodeBytes(reflect.ValueOf(&length), d.c.LenFunc())
+	if !lc.value.hasValue && !lc.value.greedy {
+		err := d.decodeBytes(lc, reflect.ValueOf(&length), d.c.LenBytes)
 		if err != nil {
 			return err
 		}
@@ -301,8 +297,6 @@ func (d *Decoder) decodeMap(lc localConfig, v reflect.Value) error {
 */
 
 func (d *Decoder) decodeStruct(lc localConfig, v reflect.Value) error {
-	// v.Type().Field(i).Tag.Lookup()
-
 	for i := range v.NumField() {
 		fld := v.Field(i)
 		fldty := v.Type().Field(i)

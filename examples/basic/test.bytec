@@ -1,12 +1,12 @@
 # string
-15 "Person Database"
+15 0 0 0 "Person Database"
 
 # array of bytes
 10 20 30 40 50 60 70 80 100
 
 # list of strings
-4
-4 "Mark"
-5 "Jason"
-4 "Theo"
-5 "Henry"
+4 0 0 0
+4 0 0 0 "Mark"
+5 0 0 0 "Jason"
+4 0 0 0 "Theo"
+5 0 0 0 "Henry"
