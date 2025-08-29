@@ -27,21 +27,27 @@ var DefaultConfig = &Config{
 	StoreFieldValues: true,
 }
 
-type localConfig struct {
-	fieldSizes map[string]uintptr
-	c          *Config
-	path       string
+type fieldValue struct {
+	length   uintptr
+	greedy   bool
+	hasValue bool
+}
 
-	length uintptr
+type localConfig struct {
+	fieldValues map[string]fieldValue
+	c           *Config
+	path        string
+
+	value  fieldValue
 	endian string
 }
 
 func (lc localConfig) child(fieldName string, tag *reflect.StructTag) localConfig {
 	c := localConfig{
-		fieldSizes: lc.fieldSizes,
-		c:          lc.c,
-		path:       lc.path,
-		endian:     "little",
+		fieldValues: lc.fieldValues,
+		c:           lc.c,
+		path:        lc.path,
+		endian:      "little",
 	}
 
 	if c.path == "" || c.path == "-" {
@@ -56,17 +62,24 @@ func (lc localConfig) child(fieldName string, tag *reflect.StructTag) localConfi
 
 	length, ok := tag.Lookup("length")
 	if ok {
-		n, err := strconv.ParseUint(length, 0, 64)
-		if err == nil {
-			c.length = uintptr(n)
+		if length == "greedy:" {
+			c.value = fieldValue{greedy: true}
 		} else {
-			var ok bool
-			c.length, ok = lc.fieldSizes[length]
-			if !ok {
-				panic("'" + length + "' is not a known field")
-			}
-		}
+			n, err := strconv.ParseUint(length, 0, 64)
+			if err == nil {
+				c.value = fieldValue{length: uintptr(n)}
+			} else {
+				var ok bool
+				lengthValue, ok := lc.fieldValues[length]
+				if !ok {
+					panic("'" + length + "' is not a known field")
+				}
 
+				c.value = lengthValue
+			}
+
+			c.value.hasValue = true
+		}
 	}
 
 	endian, ok := tag.Lookup("endian")
@@ -94,9 +107,9 @@ func (lc localConfig) saveValue(v reflect.Value) {
 
 	if lc.path != "" {
 		if v.Kind() == reflect.Uintptr {
-			lc.fieldSizes[lc.path] = v.Interface().(uintptr)
+			lc.fieldValues[lc.path] = fieldValue{length: v.Interface().(uintptr)}
 		} else if v.Kind() >= reflect.Uint && v.Kind() <= reflect.Uint64 {
-			lc.fieldSizes[lc.path] = uintptr(v.Uint())
+			lc.fieldValues[lc.path] = fieldValue{length: uintptr(v.Uint())}
 		}
 	}
 }

@@ -6,19 +6,28 @@ import (
 	"io"
 	"reflect"
 	"slices"
+	"strings"
 	"unsafe"
 )
+
+func isInteger(k reflect.Kind) bool {
+	return (k >= reflect.Int && k <= reflect.Int64) || (k >= reflect.Uint && k <= reflect.Uint64) || k == reflect.Uintptr
+}
 
 type byteReader struct {
 	inner      io.Reader
 	amountRead uintptr
 }
 
-func (br *byteReader) notEnoughBytes(amount uintptr, t reflect.Type) error {
+func (br *byteReader) notEnoughBytes(amount uintptr, path string, t reflect.Type) error {
+	if path != "" {
+		return fmt.Errorf("Failed to read all %d bytes starting from position %x for field %s", amount, br.amountRead, path)
+	}
+
 	return fmt.Errorf("Failed to read all %d bytes starting from position %x for type %s", amount, br.amountRead, t)
 }
 
-func (br *byteReader) read(amount uintptr, t reflect.Type) ([]byte, error) {
+func (br *byteReader) read(amount uintptr, path string, t reflect.Type) ([]byte, error) {
 	buf := make([]byte, amount)
 
 	read, err := br.inner.Read(buf)
@@ -27,12 +36,16 @@ func (br *byteReader) read(amount uintptr, t reflect.Type) ([]byte, error) {
 	}
 
 	if uintptr(read) < amount {
-		return nil, br.notEnoughBytes(amount, t)
+		return nil, br.notEnoughBytes(amount, path, t)
 	}
 
 	br.amountRead += uintptr(read)
 
 	return buf, err
+}
+
+func (br *byteReader) greedy() ([]byte, error) {
+	return io.ReadAll(br.inner)
 }
 
 // Unmarshal parses bytes of data and stores the result in the value pointed to by v.
@@ -54,9 +67,19 @@ func (br *byteReader) read(amount uintptr, t reflect.Type) ([]byte, error) {
 //
 // The struct tags and their uses:
 //
-//   - `length`: if the value is a number, then that will be used as the field value length; if the value is a dot-separated path,
-//     it will try to find it in the fields declared before the current field and use that value as the field value length.
+//   - `length`: see below
 //   - `endian`: the endianness of the field value; panics if the value is not 'big' or 'little', defaults to 'little'.
+//
+// The length tag:
+//
+// If the value is a number, then that will be used as the field value length.
+//
+// If the value is a dot-separated path, it will try to find it in the fields
+// declared before the current field and use that value as the field value length.
+//
+// If the value is 'greedy:', then that field will be filled with the rest of the bytes in the buffer.
+// Bytes may be wasted if the amount of bytes can't be evenly divided into the value.
+
 func Unmarshal(data []byte, v any, config *Config) error {
 	buf := bytes.NewBuffer(data)
 	decoder := NewDecoder(buf, config)
@@ -64,25 +87,25 @@ func Unmarshal(data []byte, v any, config *Config) error {
 }
 
 type Decoder struct {
-	r          byteReader
-	fieldSizes map[string]uintptr
-	c          *Config
+	r           byteReader
+	fieldValues map[string]fieldValue
+	c           *Config
 }
 
 // NewDecoder returns a new decoder that reads from r.
 //
 // If config is nil, the default config will be used.
 //
-// The decoder will not read bytes past what is needed.
+// The decoder may read bytes past what is needed in certain edge cases.
 func NewDecoder(r io.Reader, config *Config) *Decoder {
 	if config == nil {
 		config = DefaultConfig
 	}
 
 	return &Decoder{
-		r:          byteReader{r, 0},
-		fieldSizes: map[string]uintptr{},
-		c:          config,
+		r:           byteReader{r, 0},
+		fieldValues: map[string]fieldValue{},
+		c:           config,
 	}
 }
 
@@ -95,7 +118,7 @@ func (d *Decoder) Decode(v any) error {
 		panic("Decoder.Decode(v any): v must be a non-nil pointer")
 	}
 
-	return d.decode(localConfig{fieldSizes: d.fieldSizes, c: d.c, path: "-"}, val)
+	return d.decode(localConfig{fieldValues: d.fieldValues, c: d.c, path: "-"}, val)
 }
 
 func (d *Decoder) decode(lc localConfig, v reflect.Value) (err error) {
@@ -129,7 +152,17 @@ func (d *Decoder) decode(lc localConfig, v reflect.Value) (err error) {
 }
 
 func (d *Decoder) decodeBytes(lc localConfig, v reflect.Value, length uintptr) error {
-	b, err := d.r.read(length, v.Type())
+	var (
+		b   []byte
+		err error
+	)
+
+	if lc.value.greedy && length == 0 {
+		b, err = d.r.greedy()
+	} else {
+		b, err = d.r.read(length, lc.path, v.Type())
+	}
+
 	if err != nil {
 		return err
 	}
@@ -140,7 +173,7 @@ func (d *Decoder) decodeBytes(lc localConfig, v reflect.Value, length uintptr) e
 			k = v.Elem().Kind()
 		}
 
-		if (v.Kind() >= reflect.Int && v.Kind() <= reflect.Int64) || (v.Kind() >= reflect.Uint && v.Kind() <= reflect.Uint64) || v.Kind() == reflect.Uintptr {
+		if isInteger(k) {
 			slices.Reverse(b)
 		}
 	}
@@ -167,9 +200,9 @@ func (d *Decoder) decodeBytes(lc localConfig, v reflect.Value, length uintptr) e
 }
 
 func (d *Decoder) decodeBytesWithLength(lc localConfig, v reflect.Value) error {
-	length := lc.length
+	length := lc.value.length
 
-	if length <= 0 {
+	if length == 0 && !lc.value.greedy {
 		err := d.decodeBytes(lc, reflect.ValueOf(&length), d.c.LenBytes)
 		if err != nil {
 			return err
@@ -180,9 +213,49 @@ func (d *Decoder) decodeBytesWithLength(lc localConfig, v reflect.Value) error {
 }
 
 func (d *Decoder) decodeSeq(lc localConfig, v reflect.Value, length uintptr) error {
+	if lc.value.greedy && !lc.value.hasValue {
+		i := 0
+		for {
+			if v.Kind() == reflect.Slice {
+				v.Grow(1)
+				v.SetLen(i + 1)
+			}
+
+			err := d.decode(lc.child(fmt.Sprint(i), nil), v.Index(i))
+			if err != nil {
+				if strings.HasPrefix(err.Error(), "Failed to read") {
+					return nil
+				}
+
+				return err
+			}
+
+			i++
+		}
+	}
+
+	if length == 0 {
+		return nil
+	}
+
 	if v.Kind() == reflect.Slice {
 		v.Grow(int(length))
 		v.SetLen(int(length))
+	}
+
+	if k := v.Type().Elem().Kind(); k == reflect.Uint8 || k == reflect.Int8 {
+		b, err := d.r.read(length, lc.path, v.Type())
+		if err != nil {
+			return err
+		}
+
+		p := v.Index(0).Addr().UnsafePointer()
+		bp := (*byte)(p)
+		sl := unsafe.Slice(bp, len(b))
+
+		copy(sl, b)
+
+		return nil
 	}
 
 	for i := range length {
@@ -196,9 +269,9 @@ func (d *Decoder) decodeSeq(lc localConfig, v reflect.Value, length uintptr) err
 }
 
 func (d *Decoder) decodeSeqWithLength(lc localConfig, v reflect.Value) error {
-	length := lc.length
+	length := lc.value.length
 
-	if length <= 0 {
+	if !lc.value.hasValue && !lc.value.greedy {
 		err := d.decodeBytes(lc, reflect.ValueOf(&length), d.c.LenBytes)
 		if err != nil {
 			return err
@@ -210,7 +283,7 @@ func (d *Decoder) decodeSeqWithLength(lc localConfig, v reflect.Value) error {
 
 /*
 func (d *Decoder) decodeMap(lc localConfig, v reflect.Value) error {
-	length := lc.length
+	length := lc.value.length
 
 	if length <= 0 {
 		err := d.decodeBytes(reflect.ValueOf(&length), d.c.LenFunc())
@@ -220,7 +293,7 @@ func (d *Decoder) decodeMap(lc localConfig, v reflect.Value) error {
 	}
 
 	for i := range length {
-		k := v.Type().Key()
+		reflect.Zero(v.Type().Key())
 	}
 
 	return nil
