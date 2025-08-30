@@ -25,17 +25,17 @@ type fieldValue struct {
 }
 
 type localConfig struct {
-	fieldValues map[string]fieldValue
+	fieldValues map[string]*fieldValue
 	c           *Config
 	path        string
 
-	value      fieldValue
-	lengthSize uintptr
-	endian     string
+	value         *fieldValue
+	lengthSize    uintptr
+	endian, flags string
 }
 
-func (lc localConfig) child(fieldName string, tag *reflect.StructTag) localConfig {
-	c := localConfig{
+func (lc *localConfig) child(fieldName string, tag *reflect.StructTag) *localConfig {
+	c := &localConfig{
 		fieldValues: lc.fieldValues,
 		c:           lc.c,
 		path:        lc.path,
@@ -56,11 +56,11 @@ func (lc localConfig) child(fieldName string, tag *reflect.StructTag) localConfi
 	length, ok := tag.Lookup("length")
 	if ok {
 		if length == "greedy:" {
-			c.value = fieldValue{greedy: true}
+			c.value = &fieldValue{greedy: true}
 		} else {
 			n, err := strconv.ParseUint(length, 0, 64)
 			if err == nil {
-				c.value = fieldValue{length: uintptr(n)}
+				c.value = &fieldValue{length: uintptr(n)}
 			} else {
 				var ok bool
 				lengthValue, ok := lc.fieldValues[length]
@@ -97,10 +97,15 @@ func (lc localConfig) child(fieldName string, tag *reflect.StructTag) localConfi
 		c.lengthSize = uintptr(n)
 	}
 
+	flags, ok := tag.Lookup("flags")
+	if ok {
+		c.flags = flags
+	}
+
 	return c
 }
 
-func (lc localConfig) saveValue(v reflect.Value) {
+func (lc *localConfig) saveValue(v reflect.Value) {
 	if !lc.c.StoreFieldValues {
 		return
 	}
@@ -112,9 +117,26 @@ func (lc localConfig) saveValue(v reflect.Value) {
 
 	if lc.path != "" {
 		if v.Kind() == reflect.Uintptr {
-			lc.fieldValues[lc.path] = fieldValue{length: v.Interface().(uintptr)}
+			lc.fieldValues[lc.path] = &fieldValue{length: v.Interface().(uintptr)}
 		} else if v.Kind() >= reflect.Uint && v.Kind() <= reflect.Uint64 {
-			lc.fieldValues[lc.path] = fieldValue{length: uintptr(v.Uint())}
+			lc.fieldValues[lc.path] = &fieldValue{length: uintptr(v.Uint())}
 		}
 	}
+}
+
+func (lc *localConfig) hasFlag(name string) bool {
+	if len(name) == 0 {
+		return false
+	}
+
+	s := lc.flags
+	for s != "" {
+		var opt string
+		opt, s, _ = strings.Cut(s, ",")
+		if opt == name {
+			return true
+		}
+	}
+
+	return false
 }

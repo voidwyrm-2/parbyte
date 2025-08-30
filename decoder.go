@@ -84,7 +84,7 @@ func Unmarshal(data []byte, v any, config *Config) error {
 
 type Decoder struct {
 	r           byteReader
-	fieldValues map[string]fieldValue
+	fieldValues map[string]*fieldValue
 	c           *Config
 }
 
@@ -100,7 +100,7 @@ func NewDecoder(r io.Reader, config *Config) *Decoder {
 
 	return &Decoder{
 		r:           byteReader{r, 0},
-		fieldValues: map[string]fieldValue{},
+		fieldValues: map[string]*fieldValue{},
 		c:           config,
 	}
 }
@@ -114,10 +114,10 @@ func (d *Decoder) Decode(v any) error {
 		panic("Decoder.Decode(v any): v must be a non-nil pointer")
 	}
 
-	return d.decode(localConfig{fieldValues: d.fieldValues, c: d.c, path: "-"}, val)
+	return d.decode(&localConfig{fieldValues: d.fieldValues, c: d.c, path: "-"}, val)
 }
 
-func (d *Decoder) decode(lc localConfig, v reflect.Value) (err error) {
+func (d *Decoder) decode(lc *localConfig, v reflect.Value) (err error) {
 	ty := v.Type()
 
 	defer lc.saveValue(v)
@@ -147,7 +147,7 @@ func (d *Decoder) decode(lc localConfig, v reflect.Value) (err error) {
 	return
 }
 
-func (d *Decoder) decodeBytes(lc localConfig, v reflect.Value, length uintptr) error {
+func (d *Decoder) decodeBytes(lc *localConfig, v reflect.Value, length uintptr) error {
 	var (
 		b   []byte
 		err error
@@ -195,7 +195,7 @@ func (d *Decoder) decodeBytes(lc localConfig, v reflect.Value, length uintptr) e
 	return nil
 }
 
-func (d *Decoder) decodeBytesWithLength(lc localConfig, v reflect.Value) error {
+func (d *Decoder) decodeBytesWithLength(lc *localConfig, v reflect.Value) error {
 	length := lc.value.length
 
 	if length == 0 && !lc.value.greedy {
@@ -208,7 +208,7 @@ func (d *Decoder) decodeBytesWithLength(lc localConfig, v reflect.Value) error {
 	return d.decodeBytes(lc, v, length)
 }
 
-func (d *Decoder) decodeSeq(lc localConfig, v reflect.Value, length uintptr) error {
+func (d *Decoder) decodeSeq(lc *localConfig, v reflect.Value, length uintptr) error {
 	if lc.value.greedy && !lc.value.hasValue {
 		i := 0
 		for {
@@ -264,7 +264,7 @@ func (d *Decoder) decodeSeq(lc localConfig, v reflect.Value, length uintptr) err
 	return nil
 }
 
-func (d *Decoder) decodeSeqWithLength(lc localConfig, v reflect.Value) error {
+func (d *Decoder) decodeSeqWithLength(lc *localConfig, v reflect.Value) error {
 	length := lc.value.length
 
 	if !lc.value.hasValue && !lc.value.greedy {
@@ -296,7 +296,7 @@ func (d *Decoder) decodeMap(lc localConfig, v reflect.Value) error {
 }
 */
 
-func (d *Decoder) decodeStruct(lc localConfig, v reflect.Value) error {
+func (d *Decoder) decodeStruct(lc *localConfig, v reflect.Value) error {
 	for i := range v.NumField() {
 		fld := v.Field(i)
 		fldty := v.Type().Field(i)
